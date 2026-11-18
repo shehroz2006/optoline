@@ -1,0 +1,29 @@
+const $=s=>document.querySelector(s);
+const fmt=n=>"Rs. "+Number(n||0).toLocaleString("en-PK");
+let selectedVisitor=null,productCache=[];
+async function api(url,opts={}){const r=await fetch(url,{credentials:"same-origin",...opts});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.error||`Request failed (${r.status})`);return d;}
+function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+async function showDashboard(){
+ try{
+  const me=await api("/api/admin/me");if(!me.admin)return;
+  $("#login").classList.add("hidden");$("#dashboard").classList.remove("hidden");
+  const [stats,orders]=await Promise.all([api("/api/admin/stats"),api("/api/admin/orders")]);
+  $("#stat-products").textContent=stats.products;$("#stat-orders").textContent=stats.orders;$("#stat-revenue").textContent=fmt(stats.revenue);$("#stat-unread").textContent=stats.unread||0;
+  $("#orders-body").innerHTML=orders.map(o=>`<tr><td>#${o.id}<br>${escapeHtml(o.created_at)}</td><td>${escapeHtml(o.customer_name)}<br>${escapeHtml(o.phone)}</td><td>${escapeHtml(o.items)}</td><td>${fmt(o.total)}</td><td>${escapeHtml(o.status)}</td><td><select onchange="updateStatus(${o.id},this.value)">${["Pending","Confirmed","Processing","Shipped","Completed","Cancelled"].map(s=>`<option ${s===o.status?"selected":""}>${s}</option>`).join("")}</select></td></tr>`).join("")||'<tr><td colspan="6">No orders yet.</td></tr>';
+  await refreshProducts();await loadThreads();
+ }catch(e){$("#login-error").textContent=e.message;}
+}
+window.updateStatus=async(id,status)=>{try{await api("/api/admin/orders/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});await showDashboard();}catch(e){alert(e.message)}};
+function renderProducts(){ $("#product-list").innerHTML='<h3>Current products</h3>'+productCache.map(p=>`<div class="admin-product-row"><img src="${escapeHtml(p.image)}" alt=""><div class="admin-product-desc"><strong>${escapeHtml(p.name)}</strong><small>${escapeHtml(p.sku||"")} · ${escapeHtml(p.category)} · ${fmt(p.price)} · Stock: ${p.stock_quantity}</small></div><button class="small-btn" onclick="editProduct(${p.id})">EDIT</button><button class="small-btn danger" onclick="deleteProduct(${p.id})">DELETE</button></div>`).join("")||"<p>No products yet.</p>";}
+async function refreshProducts(){productCache=await api("/api/admin/products");renderProducts();}
+window.editProduct=id=>{const p=productCache.find(x=>x.id===id);if(!p)return;const f=$("#product-form");f.elements.id.value=p.id;f.elements.sku.value=p.sku||"";f.elements.name.value=p.name;f.elements.category.value=p.category;f.elements.price.value=p.price;f.elements.stock_quantity.value=p.stock_quantity??0;f.elements.featured.checked=!!p.featured;f.elements.description.value=p.description;f.elements.image.value=p.image;$("#product-submit").textContent="UPDATE PRODUCT";f.scrollIntoView({behavior:"smooth"});};
+window.deleteProduct=async id=>{if(!confirm("Delete this product?"))return;try{await api("/api/admin/products/"+id,{method:"DELETE"});await refreshProducts();await showDashboard();}catch(e){alert(e.message)}};
+async function loadThreads(){const rows=await api("/api/admin/chat");$("#chat-threads").innerHTML=rows.map(t=>`<button class="chat-thread ${selectedVisitor===t.visitor_id?"selected":""}" data-visitor="${escapeHtml(t.visitor_id)}"><strong>Visitor ${escapeHtml(t.visitor_id.slice(-7))}</strong><small>${escapeHtml(t.last_message||"")}</small>${t.unread?`<b>${t.unread} new</b>`:""}</button>`).join("")||"No messages yet.";document.querySelectorAll("[data-visitor]").forEach(b=>b.onclick=()=>selectThread(b.dataset.visitor));}
+async function selectThread(id){selectedVisitor=id;await loadThreads();const msgs=await api("/api/chat/"+encodeURIComponent(id));$("#admin-chat-messages").innerHTML=msgs.map(m=>`<div class="chat-bubble ${m.sender==="owner"?"bot":"user"}"><small>${m.sender==="owner"?"OPTOLINE":"CUSTOMER"} · ${escapeHtml(m.created_at)}</small><br>${escapeHtml(m.message)}</div>`).join("");$("#admin-chat-messages").scrollTop=$("#admin-chat-messages").scrollHeight;}
+$("#admin-reply-form").addEventListener("submit",async e=>{e.preventDefault();if(!selectedVisitor){alert("Select a customer conversation first.");return;}const input=$("#admin-reply");try{await api("/api/admin/chat/"+encodeURIComponent(selectedVisitor)+"/reply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:input.value})});input.value="";await selectThread(selectedVisitor);}catch(err){alert(err.message)}});
+$("#refresh-chat").onclick=loadThreads;
+$("#product-form").addEventListener("submit",async e=>{e.preventDefault();const f=e.target,fd=new FormData(f),id=fd.get("id");try{await api(id?"/api/admin/products/"+id:"/api/admin/products",{method:id?"PATCH":"POST",body:fd});f.reset();f.elements.id.value="";$("#product-submit").textContent="SAVE PRODUCT";await refreshProducts();await showDashboard();alert("Product saved successfully.");}catch(err){alert(err.message)}});
+$("#cancel-edit").onclick=()=>{$("#product-form").reset();$("#product-form").elements.id.value="";$("#product-submit").textContent="SAVE PRODUCT";};
+$("#login-form").addEventListener("submit",async e=>{e.preventDefault();const f=new FormData(e.target);try{await api("/api/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(f))});$("#login-error").textContent="";await showDashboard();}catch(err){$("#login-error").textContent=err.message;}});
+$("#logout").onclick=async()=>{try{await api("/api/admin/logout",{method:"POST"});location.reload();}catch(e){alert(e.message)}};
+showDashboard();setInterval(()=>{if(!$("#dashboard").classList.contains("hidden")){loadThreads();if(selectedVisitor)selectThread(selectedVisitor);}},10000);

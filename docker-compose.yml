@@ -1,0 +1,15 @@
+services:
+  optoline:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - optoline-data:/app/data
+      - optoline-private:/app/private_uploads
+      - optoline-public-uploads:/app/public/uploads
+volumes:
+  optoline-data:
+  optoline-private:
+  optoline-public-uploads:
